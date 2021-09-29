@@ -13,6 +13,9 @@ import sys, os
 from pygcga.utilities import NoReasonableStructureFound
 
 def voronoi_polygons(voronoi, diameter):
+    """
+    Generate voronoi cells using the centriods.
+    """
     centroid = voronoi.points.mean(axis=0)
     ridge_direction = defaultdict(list)
     for (p, q), rv in zip(voronoi.ridge_points, voronoi.ridge_vertices):
@@ -50,9 +53,9 @@ def voronoi_polygons(voronoi, diameter):
         yield Polygon(np.concatenate((finite_part, extra_edge)))
 
 def random_point_within(poly,n=40):
-    ```
+    """
     Randomly generate 'n' centroid points within the cell boundary
-    ```
+    """
     min_x, min_y, max_x, max_y = poly.bounds
 
     X = []
@@ -66,7 +69,13 @@ def random_point_within(poly,n=40):
         Y.append(y)
     return ([X, Y])
 
-def rand_clustering(surface, dr, bond_range,n=4, max_trial=10,boundary=None):
+def rand_clustering(surface, dr,n=4,boundary=None):
+    """
+    surface = input strucutre
+    dr = max distance used while randomly displacing adsorbates
+    n = number of centroid points
+    boundary = array of points definding the unit cell unless stated otherwise.
+    """
     
     cell = surface.get_cell()
     a = cell[0,0]
