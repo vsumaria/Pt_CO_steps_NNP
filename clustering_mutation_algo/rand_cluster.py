@@ -7,10 +7,7 @@ from collections import defaultdict
 import random
 from shapely.geometry.linestring import LineString
 import numpy as np
-from pygcga.topology import Topology
-from pygcga.checkatoms import CheckAtoms
 import sys, os
-from pygcga.utilities import NoReasonableStructureFound
 
 def voronoi_polygons(voronoi, diameter):
     """
