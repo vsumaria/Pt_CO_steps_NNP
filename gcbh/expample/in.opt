@@ -1,0 +1,26 @@
+#input
+units                  metal
+dimension	       3
+processors	       * * *
+box tilt 	       large
+boundary 	       p p f
+
+#real data
+atom_style	       atomic
+read_data	       struc.data
+
+#potential
+#potential
+pair_style nnp showew no showewsum 10000 maxew 500000 resetew yes cflength 1 cfenergy 1 emap 1:Pt,2:C,3:O
+pair_coeff * * 7
+timestep 0.001
+
+region slab block EDGE EDGE EDGE EDGE 0 18.5
+group fixed_slab region slab
+fix freeze fixed_slab setforce 0.0 0.0 0.0
+dump 1 all custom 1 md.lammpstrj id type x y z fx fy fz
+thermo 1
+thermo_style custom step pe
+
+#minimize
+minimize  1.0e-6 1.0e-2 100000 100000
