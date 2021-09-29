@@ -50,6 +50,9 @@ def voronoi_polygons(voronoi, diameter):
         yield Polygon(np.concatenate((finite_part, extra_edge)))
 
 def random_point_within(poly,n=40):
+    ```
+    Randomly generate 'n' centroid points within the cell boundary
+    ```
     min_x, min_y, max_x, max_y = poly.bounds
 
     X = []
