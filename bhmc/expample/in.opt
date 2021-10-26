@@ -12,7 +12,7 @@ read_data	       struc.data
 #potential
 #potential
 pair_style nnp showew no showewsum 10000 maxew 500000 resetew yes cflength 1 cfenergy 1 emap 1:Pt,2:C,3:O
-pair_coeff * * 7
+pair_coeff * * 6
 timestep 0.001
 
 region slab block EDGE EDGE EDGE EDGE 0 18.5
