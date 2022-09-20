@@ -52,6 +52,253 @@ def selecting_index(weights=None):
             return i
     return len(_w) - 1
 
+def generate_H_site(r0, distance=None, width=None, center_of_mass=None):
+    """
+    r0 :
+        is the position of Pt atom, the equilibrium distance of H and Pt is 1.36+0.70=2.06
+    center_of_mass:
+        it is the center of the cluster, if the center_of_mass is specified, the position of new atom will be placed
+        on the outer direction from center_of_mass
+    """
+    if distance is None:
+        distance = BOND_LENGTHS['Pt'] + BOND_LENGTHS['H']
+    if width is None:
+        width = distance*0.15
+    dr = np.random.normal(loc=distance, scale=width)
+    if center_of_mass is None:
+        theta = np.arccos(1.0-2.0*np.random.uniform(low=0.0, high=1.0))
+    else:
+        # new H atoms only exist in the z+ direction
+        theta = np.arccos((1.0-np.random.uniform(low=0.0, high=1.0)))
+    phi = np.random.uniform(low=0.0, high=np.pi * 2.0)
+    dz = dr * np.cos(theta)
+    dx = dr * np.sin(theta) * np.cos(phi)
+    dy = dr * np.sin(theta) * np.sin(phi)
+    dp0 = np.array([dx, dy, dz])
+    try:
+        assert np.abs(np.sqrt(np.power(dp0, 2).sum()) - dr) < 1.0e-3 # check math is correct
+    except AssertionError:
+        print("Whoops, Bad things happened when generate new H positions")
+        exit(1)
+    if center_of_mass is None:
+        return dp0 + np.array(r0)  # returned value is a possible site for H atom
+    else:
+        pout = r0 - np.array(center_of_mass)
+        x, y, z = pout
+        # we will find a rotation matrix to rotate the z+ direction to pout here.
+        if np.power(pout, 2).sum() < 1.0e-1:
+            # r0 is too close to the center of mass? this is a bad Pt site
+            # if the cluster is a small cluster, this might be correct
+            return None
+        if (y ** 2 + z ** 2) < 1.0e-6:
+            theta_y = np.pi / 2.0
+            RotationMatrix = np.array([[np.cos(theta_y), 0.0, np.sin(theta_y)],
+                                       [0.0, 1.0, 0.0],
+                                       [-1.0 * np.sin(theta_y), 0.0, np.cos(theta_y)]])
+        else:
+            # fint the rotation matrix
+            with np.errstate(invalid='raise'):
+                # try:
+                theta_x = -1.0 * np.arccos(z / np.sqrt(y ** 2 + z ** 2))
+                theta_y = np.arcsin(x / np.sqrt(x ** 2 + y ** 2 + z ** 2))
+                # except:
+                #     print "x= %.8f, y=%.8f, z=%.8f" % (x,y,z)
+                #     print z / (y ** 2 + z ** 2)
+                #     print x / (x ** 2 + y ** 2 + z ** 2)
+                #     print("something erorr in the math here")
+                #     exit(1)
+            M_x = np.array([[1.0, 0.0, 0.0],
+                            [0.0, np.cos(theta_x), -1.0 * np.sin(theta_x)],
+                            [0.0, np.sin(theta_x), np.cos(theta_x)]])
+            M_y = np.array([[np.cos(theta_y), 0.0, np.sin(theta_y)],
+                            [0.0, 1.0, 0.0],
+                            [-1.0 * np.sin(theta_y), 0.0, np.cos(theta_y)]])
+            RotationMatrix = np.matmul(M_y, M_x)
+        # RotationMatrix could rotate the [0,0,1] to pout direction.
+        dp1 = np.matmul(RotationMatrix, dp0)
+        try:
+            # check math is correct
+            assert np.abs(np.power(dp1, 2).sum() - np.power(dr, 2)) < 1.0e-3
+        except AssertionError:
+            _r2 = np.power(dp1, 2).sum()
+            print("_r2=%.3f" % _r2)
+            print("r**2=%.3f" % dr ** 2)
+            exit(1)
+        return dp1 + np.array(r0)
+
+
+def add_molecule_on_cluster(cluster, molecule='H', anchor_atom=None, metal="Pt",
+                            verbosity=False, maxcoordination=12, weights=None,
+                            max_attempts_1=500,
+                            max_attempts_2=500,
+                            minimum_bond_distance_ratio=0.7,
+                            maximum_bond_distance_ratio=1.4,
+                            outer_sphere=True,
+                            distribution=0):
+    """
+    :param cluster: ase.atoms.Atoms object
+    :param molecule: string. I should be able get the molecule from ase.build.molecule
+    :param anchor_atom: string if there are more than 2 atoms in the molecule, which atom will form bond with metal,
+           This parameter currently is not used.
+    :param metal: string; metal element; currently on support one element cluster (no alloy allowed)
+    :param maxcoordination: the maximum coordination for 'metal',the anchoring is attempted only if CN of meta
+            is smaller than maxcoordition number
+    :param weights: list of floats. If the weights are specified, I will not check the coordination numbers, the
+           anchoring sites will be determined by the weights.
+           The length of weights must be same as the number of atoms in the 'cluster' object
+    :param verbosity: print details to standard out
+    :param max_attempts_1: how many attempts made to find a suitable anchor site on cluster
+    :param max_attempts_2: how many attempts made to anchor the molecule on the cluster
+    :param minimum_bond_distance_ratio: The minimum bond distance will calculated by this ratio multiplied by the
+           sum of atomic radius (got from ase.data)
+    :param maximum_bond_distance_ratio: bla,bla
+    :param outer_sphere: if True, the molecule will be added in the outer sphere region of the cluster, this is good
+    option for large and spherical clusters (center of the mass is used). Other wise, use False, for small cluster
+    :param distribution: 0 or 1: if distribution=0, the maximum coordination number of metal
+    is maxcoordination; if distribution=1, the probability is uniformly distributed for different metal atoms.
+    :return: ase.atoms.Atoms object
+    This function will add one molecule on the cluster and return a new cluster.
+    ++ using of weights ++
+    If weights are not specified, the anchoring sites will be determined by the coordination number of the metal atoms,
+    otherwise, the anchoring sites will be chosen by the weights. For example, the weights could be determined by atomic
+    energies from high-dimensional neural network.
+    ++ adding molecule rather than single atom++
+    Currently this function does not support add a molecule (more than 2 atoms), so the anchor_atom is ignored.
+    ++ the total attempts will be max_attempts_1 x max_attempts_2
+    ++ minimum_bond_distance
+    """
+    if cluster is None:
+        raise RuntimeError("adding molecule on the None object")
+    try:
+        _mole = ase_create_molecule(molecule)
+        if _mole.get_number_of_atoms() == 1:
+            anchor_atom = molecule.strip()
+        elif anchor_atom is None:
+            raise RuntimeError("You must set anchor_atom when a molecule (natoms > 1) is adsorbed")
+        else:
+            assert anchor_atom in _mole.get_chemical_symbols()
+    except KeyError as e:
+        raise RuntimeError("I can not find the molecule {}".format(e))
+
+    cluster_topology = Topology(cluster, ratio=1.3)
+
+    symbols = cluster.get_chemical_symbols()
+    props = [] # The probabilities of attaching _mole to sites
+    adsorption_sites=[] # adsorption_sites is a list of elements which can absorb molecule
+    if isinstance(metal,str):
+        adsorption_sites.append(metal)
+    elif isinstance(metal, list):
+        for m in metal:
+            adsorption_sites.append(m)
+    else:
+        raise RuntimeError("metal=str or list, for the adsorption sites")
+
+    # setup the probabilities for adsorbing _mole
+    for index, symbol in enumerate(symbols):
+        if weights is not None:
+            props.append(weights[index])
+        elif symbol not in adsorption_sites:
+            props.append(0.0)
+        else:
+            if distribution == 0:
+                _cn = cluster_topology.get_coordination_number(index)
+                props.append(max([maxcoordination-_cn, 0.0]))
+            else:
+                props.append(1.0)
+
+    atoms_checker=CheckAtoms(max_bond=maximum_bond_distance_ratio, min_bond=minimum_bond_distance_ratio)
+    for n_trial in range(max_attempts_1):
+        if verbosity:
+            sys.stdout.write("Try to find a metal atoms, trial number %3d\n" % n_trial)
+        attaching_index = selecting_index(props)
+        site_symbol = symbols[attaching_index]
+        if site_symbol not in adsorption_sites:
+            continue
+        else:
+            for n_trial_2 in range(max_attempts_2):
+                p0 = cluster.get_positions()[attaching_index]
+                if outer_sphere:
+                    p1 = generate_H_site(p0, distance=BOND_LENGTHS[site_symbol]+BOND_LENGTHS[anchor_atom],
+                                         width=0.05, center_of_mass=cluster.get_center_of_mass())
+                else:
+                    p1 = generate_H_site(p0, distance=BOND_LENGTHS[site_symbol]+BOND_LENGTHS[anchor_atom],
+                                         width=0.05, center_of_mass=None)
+                if p1 is None:
+                    # I did not find a good H position
+                    continue
+                if _mole.get_number_of_atoms() == 1:
+                    _mole.set_positions(_mole.get_positions() - _mole.get_center_of_mass() + p1)
+                    new_atoms = cluster.copy()
+                    for _a in _mole:
+                        _a.tag = 1
+                        new_atoms.append(_a)
+                    if atoms_checker.is_good(new_atoms, quickanswer=True):
+                        return new_atoms
+                else:
+                    # if _mole has more than 1 atoms. I will try to rotate the _mole several times to give it a chance
+                    # to fit other atoms
+                    for n_rotation in range(20):
+                        new_atoms = cluster.copy()
+                        # firstly, randomly rotate the _mole
+                        phi = np.rad2deg(np.random.uniform(low=0.0, high=np.pi * 2.0))
+                        theta = np.rad2deg(np.arccos(1.0 - 2.0 * np.random.uniform(low=0.0, high=1.0)))
+                        _mole.euler_rotate(phi=phi, theta=theta, psi=0.0, center="COP")
+                        # get the positions of anchored atoms
+                        possible_anchored_sites = [i for i, e in enumerate(_mole.get_chemical_symbols())
+                                                   if e == anchor_atom]
+                        decided_anchored_site = np.random.choice(possible_anchored_sites)
+                        p_anchored_position =_mole.get_positions()[decided_anchored_site]
+                        # make sure the anchored atom will locate at p1, which is determined by the function
+                        _mole.set_positions(_mole.get_positions()+(p1-p_anchored_position))
+                        for _a in _mole:
+                            _a.tag = 1
+                            new_atoms.append(_a)
+                        if atoms_checker.is_good(new_atoms, quickanswer=True):
+                            return new_atoms
+                        else:
+                            continue
+    raise NoReasonableStructureFound("No reasonable structure found when adding an addsorbate")
+
+def remove_one_adsorbate(structures=None, molecule="H", adsorbate_weights=None):
+    """
+    :param structures: atoms object
+    :param molecule: a symbol for element
+    :param adsorbate_weights:
+    :return:
+    """
+
+    atoms = structures.copy()
+    nat_cut = natural_cutoffs(atoms, mult=0.9)
+    nl = NeighborList(nat_cut, self_interaction=False, bothways=True)
+    nl.update(atoms)
+
+    ndx_mol = [atom.index for atom in atoms if atom.symbol==molecule]
+    C_ndx = [atom.index for atom in atoms if atom.symbol=='C']
+
+    flag=[]
+    for i in ndx_mol:
+        indices, offsets = nl.get_neighbors(i)
+        x = np.intersect1d(indices, C_ndx)
+        if len(x)!=0:
+            flag.append(0)
+        else:
+            flag.append(1)
+
+    flag = np.array(flag)
+
+    if np.all(flag == 0):
+        return structures
+
+    ndx_mol_sel = [ndx_mol[i] for i in range(len(flag)) if flag[i]==1]
+    print(ndx_mol_sel)
+
+    sel_ndx = random.choice(ndx_mol_sel)
+
+    print('index to delete is '+str(sel_ndx))
+    del structures[sel_ndx]
+
+    # delete_single_atom_with_constraint(structures, sel_ndx)
+    return structures
 
 def add_CO_on_surfaces(surface,surf_ind,element="C", zmax=1.9, zmin= 1.8, minimum_distance=0.7,
                          maximum_distance=1.4,bond_range=None,max_trials=200):
