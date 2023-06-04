@@ -49,8 +49,8 @@ programlogo = r"""
 
 
           Grand Canonical Basin-Hoppings 
-                 Geng Sun(UCLA)          
-                gengsun@ucla.edu        
+                 Vaidish Sumaria (UCLA)          
+                vsumaria@ucla.edu        
 ---------------------------------------------------
 """
 
